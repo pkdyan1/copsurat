@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Cop Surat Digital</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <!-- Interact.js -->
+    <script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
+    <!-- html2pdf -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            background-color: #f3f4f6;
+            font-family: 'Inter', sans-serif;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+
+        /* Stamp Styling */
+        .stamp-table {
+            border-collapse: collapse;
+            color: #1e40af; /* Deep blue like real ink */
+            font-family: Arial, Helvetica, sans-serif;
+            font-weight: bold;
+            font-size: 11px;
+            background-color: transparent;
+            user-select: none;
+            width: 380px;
+        }
+        
+        .stamp-table td {
+            border: 2px solid #1e40af;
+            padding: 5px 3px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .stamp-container {
+            position: absolute;
+            top: 50px;
+            left: 50px;
+            z-index: 50;
+            cursor: grab;
+            display: none;
+            /* blend mode to look like real ink over text */
+            mix-blend-mode: multiply;
+            opacity: 0.95;
+            transform-origin: center center;
+            transition: box-shadow 0.2s;
+        }
+
+        .stamp-container:hover {
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .stamp-container:active {
+            cursor: grabbing;
+            box-shadow: none;
+        }
+
+        #documentViewer canvas, #documentViewer img {
+            width: 100%;
+            height: auto;
+            display: block;
+            margin-bottom: 0;
+            background-color: white;
+        }
+        
+        #exportContainer {
+            background-color: white;
+            min-height: 1123px; /* A4 height approx at 96dpi */
+            width: 794px; /* A4 width approx at 96dpi */
+            position: relative;
+            overflow: hidden; 
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        
+        /* Loader */
+        .loader {
+            border: 3px solid #e5e7eb;
+            border-top: 3px solid #2563eb;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen overflow-hidden text-gray-800">
+
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-900 to-blue-700 text-white p-4 shadow-lg flex justify-between items-center z-20 shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="bg-white/20 p-2 rounded-lg backdrop-blur-sm">
+                <i class="fas fa-stamp text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold tracking-tight">Sistem Cop Surat Digital</h1>
+                <p class="text-xs text-blue-200">Klinik Kesihatan Yan</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-5">
+            <div class="flex items-center gap-3 bg-black/20 px-4 py-2 rounded-lg backdrop-blur-sm border border-white/10 hidden md:flex">
+                <label for="stampSize" class="text-sm font-medium text-blue-50"><i class="fas fa-search-plus mr-1"></i> Saiz Cop:</label>
+                <input type="range" id="stampSize" min="0.5" max="2" step="0.1" value="1" class="w-24 accent-blue-400">
+                <span id="scaleValue" class="text-xs font-mono w-8 text-right">1.0x</span>
+            </div>
+            
+            <button onclick="saveToDrive()" id="btnDrive" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-blue-500/30 transition-all font-semibold flex items-center gap-2 transform hover:-translate-y-0.5">
+                <i class="fab fa-google-drive"></i> Simpan ke Drive
+            </button>
+
+            <button onclick="exportToPDF()" class="bg-emerald-500 hover:bg-emerald-400 text-white px-5 py-2.5 rounded-lg shadow-lg hover:shadow-emerald-500/30 transition-all font-semibold flex items-center gap-2 transform hover:-translate-y-0.5">
+                <i class="fas fa-download"></i> Muat Turun
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex overflow-hidden">
+        
+        <!-- Sidebar Controls -->
+        <aside class="w-80 bg-white shadow-[4px_0_24px_rgba(0,0,0,0.05)] flex flex-col z-10 shrink-0">
+            <div class="p-6 overflow-y-auto flex-1 custom-scrollbar">
+                
+                <!-- Step 1 -->
+                <div class="mb-8">
+                    <div class="flex items-center gap-2 mb-4">
+                        <span class="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center font-bold text-sm">1</span>
+                        <h2 class="text-sm font-bold text-gray-800 uppercase tracking-wider">Muat Naik Surat</h2>
+                    </div>
+                    
+                    <label for="fileUpload" class="group flex flex-col items-center justify-center w-full h-36 border-2 border-dashed border-blue-200 rounded-xl cursor-pointer bg-blue-50/50 hover:bg-blue-50 hover:border-blue-400 transition-all">
+                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                            <div class="bg-blue-100 p-3 rounded-full mb-3 group-hover:scale-110 transition-transform">
+                                <i class="fas fa-cloud-upload-alt text-2xl text-blue-600"></i>
+                            </div>
+                            <p class="mb-1 text-sm text-gray-600 text-center px-4"><span class="font-semibold text-blue-600">Klik sini</span> atau seret fail</p>
+                            <p class="text-xs text-gray-400">PDF & Gambar (JPG/PNG)</p>
+                        </div>
+                        <input id="fileUpload" type="file" class="hidden" accept="application/pdf,image/*" onchange="handleFileUpload(event)" />
+                    </label>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="mb-8">
+                    <div class="flex items-center gap-2 mb-4">
+                        <span class="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center font-bold text-sm">2</span>
+                        <h2 class="text-sm font-bold text-gray-800 uppercase tracking-wider">Tetapan Cop Diminit</h2>
+                    </div>
+                    
+                    <div class="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-500 mb-1.5 uppercase">Tarikh Terima</label>
+                            <div class="relative">
+                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <i class="far fa-calendar-alt text-blue-500"></i>
+                                </div>
+                                <input type="date" id="dateInput" class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm transition-shadow" onchange="updateStampDate(this.value)">
+                            </div>
+                        </div>
+
+                        <button onclick="showStamp()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 font-medium">
+                            <i class="fas fa-stamp"></i> Letak Cop Pada Surat
+                        </button>
+                        <p class="text-[11px] text-gray-400 text-center leading-relaxed">
+                            Boleh klik dan tarik (drag) cop ke mana-mana posisi.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 3 (BARU): Nama Fail -->
+                <div class="mb-8">
+                    <div class="flex items-center gap-2 mb-4">
+                        <span class="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center font-bold text-sm">3</span>
+                        <h2 class="text-sm font-bold text-gray-800 uppercase tracking-wider">Maklumat Fail</h2>
+                    </div>
+                    
+                    <div class="bg-gray-50 border border-gray-100 rounded-xl p-4">
+                        <label class="block text-xs font-semibold text-gray-500 mb-1.5 uppercase">Nama Fail Simpanan</label>
+                        <div class="relative">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <i class="fas fa-file-signature text-blue-500"></i>
+                            </div>
+                            <input type="text" id="fileNameInput" placeholder="Cth: Surat Arahan Cuti" class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm transition-shadow">
+                        </div>
+                        <p class="text-[11px] text-gray-400 mt-2 leading-relaxed">
+                            Jika kosong, sistem akan jana nama automatik berserta tarikh.
+                        </p>
+                    </div>
+                </div>
+                
+                <!-- Loading Indicator -->
+                <div id="loadingIndicator" class="hidden flex-col items-center justify-center p-6 bg-blue-50 rounded-xl border border-blue-100">
+                    <div class="loader mb-3"></div>
+                    <p class="text-sm font-medium text-blue-800">Memproses dokumen...</p>
+                    <p class="text-xs text-blue-600/70 text-center mt-1">Sila tunggu sebentar.</p>
+                </div>
+
+            </div>
+            
+            <!-- Footer dengan Kredit -->
+            <div class="p-4 border-t bg-gray-50 flex flex-col gap-2 shrink-0">
+                <div class="text-xs text-gray-400 flex items-center justify-between">
+                    <span>&copy; 2026 PKD Yan</span>
+                    <span class="flex items-center gap-1"><i class="fas fa-shield-alt"></i> Sulit & Persendirian</span>
+                </div>
+                <div class="text-[10px] text-center text-gray-400 italic">
+                    Dicipta khas oleh Syahrul Munir (MySTEP ICT 2025/2026)
+                </div>
+            </div>
+        </aside>
+
+        <!-- Preview Area -->
+        <section class="flex-1 bg-gray-200/80 overflow-auto p-8 flex justify-center custom-scrollbar relative" id="previewSection">
+            
+            <!-- This is the container that will be exported -->
+            <div id="exportContainer" class="transform transition-transform origin-top">
+                
+                <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-white">
+                    <div class="w-32 h-32 bg-gray-50 rounded-full flex items-center justify-center mb-6">
+                        <i class="far fa-file-pdf text-5xl text-gray-300"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-600 mb-2">Tiada Dokumen</h3>
+                    <p class="text-sm text-center max-w-xs">Sila muat naik fail PDF atau Gambar di panel sebelah kiri untuk bermula.</p>
+                </div>
+
+                <!-- Document Pages will be appended here -->
+                <div id="documentViewer" class="w-full flex flex-col bg-white"></div>
+
+                <!-- The Stamp -->
+                <div id="theStamp" class="stamp-container" data-x="0" data-y="0">
+                    <table class="stamp-table">
+                        <tbody>
+                            <tr>
+                                <td style="width: 20%;">PKD</td>
+                                <td style="width: 20%;">PKD II</td>
+                                <td style="width: 20%;">MO MCH</td>
+                                <td style="width: 20%;">MO EPID</td>
+                                <td style="width: 20%;">MO PRIMER</td>
+                            </tr>
+                            <tr>
+                                <td>PTW22</td>
+                                <td colspan="3" rowspan="4" style="vertical-align: middle; padding: 15px 10px;">
+                                    <div style="font-size: 16px; margin-bottom: 8px; letter-spacing: 0.5px;">PKD YAN<br>DITERIMA PADA</div>
+                                    <div id="stampDateDisplay" style="font-size: 17px; min-height: 20px; letter-spacing: 1px;"></div>
+                                </td>
+                                <td>PF</td>
+                            </tr>
+                            <tr>
+                                <td>PTN26</td>
+                                <td>PKS</td>
+                            </tr>
+                            <tr>
+                                <td>PTN22</td>
+                                <td>PSP</td>
+                            </tr>
+                            <tr>
+                                <td>PJ</td>
+                                <td>PPKPU36</td>
+                            </tr>
+                            <tr>
+                                <td colspan="2">KK YAN</td>
+                                <td>OT</td>
+                                <td>DIETITIAN</td>
+                                <td>XRAY</td>
+                            </tr>
+                            <tr>
+                                <td>FMS KKGC</td>
+                                <td>FMS KKSLD</td>
+                                <td>KKPB</td>
+                                <td>PPPU36</td>
+                                <td>FISIO</td>
+                            </tr>
+                            <tr>
+                                <td>KKGC</td>
+                                <td>KKSLD</td>
+                                <td style="font-size: 9px;">PEG PSIKO</td>
+                                <td>JTMPU32</td>
+                                <td>JKU36</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // --- Initialization ---
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        const formattedToday = `${yyyy}-${mm}-${dd}`;
+        
+        document.getElementById('dateInput').value = formattedToday;
+        updateStampDate(formattedToday);
+
+        // PDF.js configuration
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        // --- Drag and Drop Logic ---
+        let currentScale = 1;
+        let isStampVisible = false;
+        
+        interact('.stamp-container').draggable({
+            listeners: {
+                start(event) {
+                    // Bring to front if we had multiple stamps
+                },
+                move(event) {
+                    const target = event.target;
+                    const x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx;
+                    const y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy;
+
+                    target.style.transform = `translate(${x}px, ${y}px) scale(${currentScale})`;
+                    target.setAttribute('data-x', x);
+                    target.setAttribute('data-y', y);
+                }
+            },
+            modifiers: [
+                interact.modifiers.restrictRect({
+                    restriction: 'parent',
+                    endOnly: false
+                })
+            ]
+        });
+
+        // --- Event Listeners ---
+        document.getElementById('stampSize').addEventListener('input', function(e) {
+            currentScale = parseFloat(e.target.value);
+            document.getElementById('scaleValue').innerText = currentScale.toFixed(1) + 'x';
+            
+            const stamp = document.getElementById('theStamp');
+            if (isStampVisible) {
+                const x = parseFloat(stamp.getAttribute('data-x')) || 0;
+                const y = parseFloat(stamp.getAttribute('data-y')) || 0;
+                stamp.style.transform = `translate(${x}px, ${y}px) scale(${currentScale}) rotate(-1deg)`;
+            }
+        });
+
+        // --- Functions ---
+        function updateStampDate(val) {
+            if (!val) return;
+            const parts = val.split('-');
+            if(parts.length === 3) {
+                document.getElementById('stampDateDisplay').innerText = `${parts[2]}/${parts[1]}/${parts[0]}`;
+            }
+        }
+
+        function showStamp() {
+            const emptyState = document.getElementById('emptyState');
+            if(emptyState.style.display !== 'none') {
+                alert("Sila muat naik surat terlebih dahulu.");
+                return;
+            }
+
+            const stamp = document.getElementById('theStamp');
+            stamp.style.display = 'block';
+            isStampVisible = true;
+            
+            // Center the stamp initially if no position set
+            if(!stamp.getAttribute('data-x')) {
+                const container = document.getElementById('exportContainer');
+                const stampWidth = stamp.offsetWidth || 380;
+                const x = (container.offsetWidth - stampWidth) / 2;
+                const y = 150; 
+                
+                stamp.setAttribute('data-x', x);
+                stamp.setAttribute('data-y', y);
+                stamp.style.transform = `translate(${x}px, ${y}px) scale(${currentScale}) rotate(-1.5deg)`;
+            } else {
+                const x = parseFloat(stamp.getAttribute('data-x'));
+                const y = parseFloat(stamp.getAttribute('data-y'));
+                stamp.style.transform = `translate(${x}px, ${y}px) scale(${currentScale}) rotate(-1.5deg)`;
+            }
+        }
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Auto-fill file name input with original file name (minus extension)
+            const originalName = file.name.replace(/\.[^/.]+$/, "");
+            document.getElementById('fileNameInput').value = originalName;
+
+            const viewer = document.getElementById('documentViewer');
+            const emptyState = document.getElementById('emptyState');
+            const loading = document.getElementById('loadingIndicator');
+            const container = document.getElementById('exportContainer');
+            
+            viewer.innerHTML = ''; 
+            emptyState.style.display = 'none';
+            loading.style.display = 'flex';
+            
+            // Reset stamp
+            const stamp = document.getElementById('theStamp');
+            stamp.style.display = 'none';
+            stamp.removeAttribute('data-x');
+            stamp.removeAttribute('data-y');
+            isStampVisible = false;
+
+            try {
+                if (file.type === 'application/pdf') {
+                    const fileReader = new FileReader();
+                    fileReader.onload = async function() {
+                        const typedarray = new Uint8Array(this.result);
+                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                        
+                        let totalHeight = 0;
+
+                        for(let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                            const page = await pdf.getPage(pageNum);
+                            const unscaledViewport = page.getViewport({scale: 1.0});
+                            const scale = 794 / unscaledViewport.width;
+                            const viewport = page.getViewport({scale: scale}); 
+                            
+                            const canvas = document.createElement('canvas');
+                            const context = canvas.getContext('2d');
+                            canvas.height = viewport.height;
+                            canvas.width = viewport.width;
+                            canvas.className = "w-full border-b border-gray-200";
+                            
+                            viewer.appendChild(canvas);
+                            totalHeight += viewport.height;
+                            
+                            await page.render({
+                                canvasContext: context,
+                                viewport: viewport
+                            }).promise;
+                        }
+                        
+                        container.style.height = `${totalHeight}px`;
+                        loading.style.display = 'none';
+                    };
+                    fileReader.readAsArrayBuffer(file);
+                    
+                } else if (file.type.startsWith('image/')) {
+                    const fileReader = new FileReader();
+                    fileReader.onload = function(e) {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.className = "w-full h-auto block";
+                        
+                        img.onload = function() {
+                            const ratio = img.naturalHeight / img.naturalWidth;
+                            const newHeight = 794 * ratio;
+                            container.style.height = `${newHeight}px`;
+                            loading.style.display = 'none';
+                        };
+                        
+                        viewer.appendChild(img);
+                    };
+                    fileReader.readAsDataURL(file);
+                } else {
+                    alert('Sila muat naik fail berformat PDF atau Gambar sahaja.');
+                    loading.style.display = 'none';
+                    emptyState.style.display = 'flex';
+                }
+            } catch (error) {
+                console.error("Error loading file:", error);
+                alert("Ralat semasa memuat naik fail.");
+                loading.style.display = 'none';
+                emptyState.style.display = 'flex';
+            }
+        }
+
+        // --- Fungsi Untuk Mendapatkan Nama Fail ---
+        function getGeneratedFileName() {
+            let inputName = document.getElementById('fileNameInput').value.trim();
+            
+            if (inputName !== "") {
+                // Buang karakter yang tidak dibenarkan dalam nama fail, kecuali untuk huruf, nombor, space, dash
+                inputName = inputName.replace(/[^a-zA-Z0-9 \-_]/g, '');
+                return inputName.endsWith('.pdf') ? inputName : inputName + '.pdf';
+            } else {
+                // Jika kosong, guna format default dengan tarikh masa
+                const now = new Date();
+                const dd = String(now.getDate()).padStart(2, '0');
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const yyyy = now.getFullYear();
+                const time = `${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
+                return `Surat_PKD_${dd}${mm}${yyyy}_${time}.pdf`;
+            }
+        }
+
+        function exportToPDF() {
+            const emptyState = document.getElementById('emptyState');
+            if(emptyState.style.display !== 'none') {
+                alert("Tiada dokumen untuk disimpan.");
+                return;
+            }
+
+            const element = document.getElementById('exportContainer');
+            const stamp = document.getElementById('theStamp');
+            
+            if(!isStampVisible) {
+                if(!confirm("Anda belum meletakkan cop pada surat. Teruskan simpan?")) {
+                    return;
+                }
+            }
+
+            const originalShadow = stamp.style.boxShadow;
+            stamp.style.boxShadow = 'none';
+            
+            const finalFileName = getGeneratedFileName();
+
+            const opt = {
+                margin:       0,
+                filename:     finalFileName,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true, logging: false },
+                jsPDF:        { unit: 'px', format: [element.offsetWidth, element.offsetHeight], orientation: 'portrait' }
+            };
+
+            const isMultiPage = element.offsetHeight > 1200;
+            if(isMultiPage) {
+                opt.jsPDF = { unit: 'mm', format: 'a4', orientation: 'portrait' };
+            }
+
+            const btn = document.querySelector('button[onclick="exportToPDF()"]');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyimpan...';
+            btn.disabled = true;
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                stamp.style.boxShadow = originalShadow; // restore
+            }).catch(err => {
+                console.error(err);
+                alert('Ralat semasa menyimpan PDF.');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                stamp.style.boxShadow = originalShadow;
+            });
+        }
+
+        // --- Fungsi Simpan ke Google Drive ---
+        // ⚠️ GANTIKAN URL INI DENGAN WEB APP URL DARI GOOGLE APPS SCRIPT ANDA ⚠️
+        const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxiXXwIjXCL2qMMpXD3LbaQwtZrY3Al3Ghak5vXhr8WgaxNEePkhHEE52zzhO82JqEn/exec'; 
+
+        function saveToDrive() {
+            const emptyState = document.getElementById('emptyState');
+            if(emptyState.style.display !== 'none') {
+                alert("Tiada dokumen untuk disimpan.");
+                return;
+            }
+
+            if (!GOOGLE_SCRIPT_URL || GOOGLE_SCRIPT_URL === 'PASTE_WEB_APP_URL_DI_SINI') {
+                alert("PENTING: Sila tetapkan Web App URL (GOOGLE_SCRIPT_URL) dalam kod HTML terlebih dahulu mengikut tutorial yang diberikan.");
+                return;
+            }
+
+            const element = document.getElementById('exportContainer');
+            const stamp = document.getElementById('theStamp');
+            
+            if(!isStampVisible) {
+                if(!confirm("Anda belum meletakkan cop pada surat. Teruskan simpan ke Drive?")) {
+                    return;
+                }
+            }
+
+            const originalShadow = stamp.style.boxShadow;
+            stamp.style.boxShadow = 'none';
+
+            const finalFileName = getGeneratedFileName();
+
+            const opt = {
+                margin:       0,
+                filename:     finalFileName,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true, logging: false },
+                jsPDF:        { unit: 'px', format: [element.offsetWidth, element.offsetHeight], orientation: 'portrait' }
+            };
+
+            const isMultiPage = element.offsetHeight > 1200;
+            if(isMultiPage) {
+                opt.jsPDF = { unit: 'mm', format: 'a4', orientation: 'portrait' };
+            }
+
+            const btn = document.getElementById('btnDrive');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyimpan...';
+            btn.disabled = true;
+
+            // Jana PDF dalam bentuk Data URI (Base64)
+            html2pdf().set(opt).from(element).output('datauristring').then(function(pdfBase64) {
+                const base64Data = pdfBase64.split(',')[1];
+
+                fetch(GOOGLE_SCRIPT_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        fileName: finalFileName,
+                        mimeType: 'application/pdf',
+                        base64: base64Data
+                    }),
+                    // Pakai text/plain untuk elak isu CORS preflight
+                    headers: {
+                        'Content-Type': 'text/plain;charset=utf-8'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if(data.status === 'success') {
+                        alert('Berjaya! Fail [' + finalFileName + '] telah disimpan terus ke dalam Google Drive PKD Yan.');
+                    } else {
+                        alert('Ralat: ' + data.message);
+                    }
+                })
+                .catch(err => {
+                    console.error("Fetch Error:", err);
+                    alert('Ralat sambungan. Sila periksa URL Web App atau setting Google Script.');
+                })
+                .finally(() => {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    stamp.style.boxShadow = originalShadow;
+                });
+            });
+        }
+    </script>
+</body>
+</html>
