@@ -93,7 +93,7 @@
             min-height: 1123px; /* A4 height approx at 96dpi */
             width: 794px; /* A4 width approx at 96dpi */
             position: relative;
-            overflow: hidden; 
+            /* overflow: hidden; Removed to fix rendering issues with long contents */
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
         
@@ -196,7 +196,7 @@
                     </div>
                 </div>
 
-                <!-- Step 3 (BARU): Nama Fail -->
+                <!-- Step 3: Nama Fail -->
                 <div class="mb-8">
                     <div class="flex items-center gap-2 mb-4">
                         <span class="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center font-bold text-sm">3</span>
@@ -244,7 +244,7 @@
             <!-- This is the container that will be exported -->
             <div id="exportContainer" class="transform transition-transform origin-top">
                 
-                <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-white">
+                <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-white z-10">
                     <div class="w-32 h-32 bg-gray-50 rounded-full flex items-center justify-center mb-6">
                         <i class="far fa-file-pdf text-5xl text-gray-300"></i>
                     </div>
@@ -253,7 +253,7 @@
                 </div>
 
                 <!-- Document Pages will be appended here -->
-                <div id="documentViewer" class="w-full flex flex-col bg-white"></div>
+                <div id="documentViewer" class="w-full flex flex-col bg-white relative z-0"></div>
 
                 <!-- The Stamp -->
                 <div id="theStamp" class="stamp-container" data-x="0" data-y="0">
@@ -334,9 +334,7 @@
         
         interact('.stamp-container').draggable({
             listeners: {
-                start(event) {
-                    // Bring to front if we had multiple stamps
-                },
+                start(event) { },
                 move(event) {
                     const target = event.target;
                     const x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx;
@@ -388,7 +386,6 @@
             stamp.style.display = 'block';
             isStampVisible = true;
             
-            // Center the stamp initially if no position set
             if(!stamp.getAttribute('data-x')) {
                 const container = document.getElementById('exportContainer');
                 const stampWidth = stamp.offsetWidth || 380;
@@ -409,7 +406,6 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            // Auto-fill file name input with original file name (minus extension)
             const originalName = file.name.replace(/\.[^/.]+$/, "");
             document.getElementById('fileNameInput').value = originalName;
 
@@ -449,6 +445,13 @@
                             canvas.height = viewport.height;
                             canvas.width = viewport.width;
                             canvas.className = "w-full border-b border-gray-200";
+                            
+                            // Letakkan page break pada setiap canvas KECUALI yang terakhir
+                            // supaya html2pdf potong page PDF dengan betul
+                            if (pageNum < pdf.numPages) {
+                                canvas.style.pageBreakAfter = "always";
+                                canvas.style.breakAfter = "page";
+                            }
                             
                             viewer.appendChild(canvas);
                             totalHeight += viewport.height;
@@ -494,16 +497,13 @@
             }
         }
 
-        // --- Fungsi Untuk Mendapatkan Nama Fail ---
         function getGeneratedFileName() {
             let inputName = document.getElementById('fileNameInput').value.trim();
             
             if (inputName !== "") {
-                // Buang karakter yang tidak dibenarkan dalam nama fail, kecuali untuk huruf, nombor, space, dash
                 inputName = inputName.replace(/[^a-zA-Z0-9 \-_]/g, '');
                 return inputName.endsWith('.pdf') ? inputName : inputName + '.pdf';
             } else {
-                // Jika kosong, guna format default dengan tarikh masa
                 const now = new Date();
                 const dd = String(now.getDate()).padStart(2, '0');
                 const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -511,6 +511,35 @@
                 const time = `${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
                 return `Surat_PKD_${dd}${mm}${yyyy}_${time}.pdf`;
             }
+        }
+
+        // --- Fungsi Bantuan Setup Option HTML2PDF (ELAK BLANK) ---
+        function getPdfOptions(element, finalFileName) {
+            const docHeight = element.offsetHeight;
+            
+            // DYNAMIC SCALING: Turunkan skala untuk elak 'canvas size limit' pada browser 
+            // jika dokumen terlalu panjang (punca utama jadi blank putih)
+            let safeScale = 2;
+            if (docHeight > 3000) safeScale = 1.5;
+            if (docHeight > 6000) safeScale = 1;
+
+            const opt = {
+                margin:       0,
+                filename:     finalFileName,
+                image:        { type: 'jpeg', quality: 0.98 },
+                // Letak scrollY: 0 untuk reset position
+                html2canvas:  { scale: safeScale, useCORS: true, logging: false, scrollY: 0 }, 
+                jsPDF:        { unit: 'px', format: [element.offsetWidth, element.offsetHeight], orientation: 'portrait' }
+            };
+
+            const isMultiPage = docHeight > 1200;
+            if(isMultiPage) {
+                // Untuk fail multi-page, formatkan ke A4 dan aktifkan pagebreak
+                opt.jsPDF = { unit: 'mm', format: 'a4', orientation: 'portrait' };
+                opt.pagebreak = { mode: ['css', 'legacy'] }; 
+            }
+            
+            return opt;
         }
 
         function exportToPDF() {
@@ -533,19 +562,7 @@
             stamp.style.boxShadow = 'none';
             
             const finalFileName = getGeneratedFileName();
-
-            const opt = {
-                margin:       0,
-                filename:     finalFileName,
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, useCORS: true, logging: false },
-                jsPDF:        { unit: 'px', format: [element.offsetWidth, element.offsetHeight], orientation: 'portrait' }
-            };
-
-            const isMultiPage = element.offsetHeight > 1200;
-            if(isMultiPage) {
-                opt.jsPDF = { unit: 'mm', format: 'a4', orientation: 'portrait' };
-            }
+            const opt = getPdfOptions(element, finalFileName);
 
             const btn = document.querySelector('button[onclick="exportToPDF()"]');
             const originalText = btn.innerHTML;
@@ -565,8 +582,6 @@
             });
         }
 
-        // --- Fungsi Simpan ke Google Drive ---
-        // ⚠️ GANTIKAN URL INI DENGAN WEB APP URL DARI GOOGLE APPS SCRIPT ANDA ⚠️
         const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxiXXwIjXCL2qMMpXD3LbaQwtZrY3Al3Ghak5vXhr8WgaxNEePkhHEE52zzhO82JqEn/exec'; 
 
         function saveToDrive() {
@@ -594,26 +609,13 @@
             stamp.style.boxShadow = 'none';
 
             const finalFileName = getGeneratedFileName();
-
-            const opt = {
-                margin:       0,
-                filename:     finalFileName,
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, useCORS: true, logging: false },
-                jsPDF:        { unit: 'px', format: [element.offsetWidth, element.offsetHeight], orientation: 'portrait' }
-            };
-
-            const isMultiPage = element.offsetHeight > 1200;
-            if(isMultiPage) {
-                opt.jsPDF = { unit: 'mm', format: 'a4', orientation: 'portrait' };
-            }
+            const opt = getPdfOptions(element, finalFileName);
 
             const btn = document.getElementById('btnDrive');
             const originalText = btn.innerHTML;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyimpan...';
             btn.disabled = true;
 
-            // Jana PDF dalam bentuk Data URI (Base64)
             html2pdf().set(opt).from(element).output('datauristring').then(function(pdfBase64) {
                 const base64Data = pdfBase64.split(',')[1];
 
@@ -624,7 +626,6 @@
                         mimeType: 'application/pdf',
                         base64: base64Data
                     }),
-                    // Pakai text/plain untuk elak isu CORS preflight
                     headers: {
                         'Content-Type': 'text/plain;charset=utf-8'
                     }
